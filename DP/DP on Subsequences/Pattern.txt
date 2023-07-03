@@ -1,0 +1,8 @@
+Generally dp on subsequence follow the logic of TAKE  and NOTTAKE;
+
+steps
+
+1) Think in the form of indexes
+2)Do All stuff on that particular indexes
+3) return min/max/sum according to questions
+ 

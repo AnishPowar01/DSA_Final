@@ -7,23 +7,18 @@ void Bubble(int arr[], int size)
 
     for(int i = 0; i<size - 1; i++)
     {
-        bool isSorted = false;
-       for(int j = i+1;j<size; j++)
+    
+       for(int j = 0;j<size - 1; j++)
        {
-        if(arr[i] > arr[j])
+        if(arr[j] > arr[j+1])
         {
             cout<<"Swapped"<<endl;
-            swap(arr[i], arr[j]);
-            isSorted = true;
+            swap(arr[j], arr[j+1]);
+    
         }
 
        }
-        // optimization
-       if(isSorted == false)
-       {
-        cout<<"Array is Already Sorted"<<endl;
-        break;
-       }
+       
     }
 
 }
@@ -43,7 +38,7 @@ int main()
 {
     int size = 6;
 
-    int arr[size] = {1,2,3,4,5,6};
+    int arr[size] = {10,41,7,6,14,9};
 
     Bubble(arr, size);
 

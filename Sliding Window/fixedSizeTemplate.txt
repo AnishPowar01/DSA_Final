@@ -1,0 +1,27 @@
+
+int i = 0;
+int j = 0;
+
+
+while(j<n)
+{
+
+    // do some operations..
+
+    if( j - i + 1 < k)  // achieve the window size
+    {
+        j++;
+    }
+
+    else if(j - i + 1 == k)
+    {
+        // compute the result .. store it
+
+        
+        //increase the i and j
+        // before increasing make sure to undo the changes of ith position
+        i++;
+        j++;
+    }
+
+}

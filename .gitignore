@@ -1,5 +1,4 @@
 Tree
-Recursion
 Graph/DSU_by_Rank.exe
 Graph/DSU_by_Size.exe
 Linked List/creation.exe
@@ -18,3 +17,9 @@ OOP/basic.exe
 OOP/operatorOverloading.exe
 OOP/RunTimePoly.exe
 Binary Search/nearlySorted.exe
+ca.cpp
+Recursion/printSub.exe
+Recursion/minElement.exe
+substring.exe
+substring.cpp
+ca.exe

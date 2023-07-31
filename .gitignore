@@ -1,4 +1,4 @@
-Tree
+# Tree
 Graph/DSU_by_Rank.exe
 Graph/DSU_by_Size.exe
 Linked List/creation.exe
@@ -28,3 +28,5 @@ OOP/ModernDeclaration/Constructor.exe
 OOP/ModernDeclaration/Basice.exe
 Recursion/lastOucc.exe
 DP/StrangePrinter.exe
+Tree/creation.exe
+Tree/bst.exe

@@ -40,7 +40,7 @@ public:
         }
 
         // delete the common sum from total sum of two string
-        // similar pattern two leetcode 583
+        // similar pattern like leetcode 583
 
         vector<vector<int>>dp(n, vector<int>(m, -1));
 

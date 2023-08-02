@@ -87,5 +87,7 @@ int main()
     root = buildTree(root);
 
     inorder(root);
+
+    delete root;
  return 0;
 }

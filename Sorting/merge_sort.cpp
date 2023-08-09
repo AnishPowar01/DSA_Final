@@ -1,19 +1,28 @@
-#include<bits/stdc++.h>
+#include <bits/stdc++.h>
 using namespace std;
+int counter = 0;
+void print(int arr[], int size)
+{
 
+    for (int i = 0; i < size; i++)
+    {
+        cout << arr[i] << " ";
+    }
+    cout << endl;
+}
 void merge(int arr[], int start, int mid, int end)
 {
-    vector<int>temp;
+    vector<int> temp;
 
     int left = start;
-    int right = mid+1;
+    int right = mid + 1;
 
-    while(left<=mid && right <= end)
+    while (left <= mid && right <= end)
     {
-        if(arr[left] <= arr[right])
+        if (arr[left] <= arr[right])
         {
-           temp.push_back(arr[left]);
-           left++;
+            temp.push_back(arr[left]);
+            left++;
         }
         else
         {
@@ -22,60 +31,48 @@ void merge(int arr[], int start, int mid, int end)
         }
     }
 
-    while(left<=mid)
+    while (left <= mid)
     {
-         temp.push_back(arr[left]);
-           left++;
-
+        temp.push_back(arr[left]);
+        left++;
     }
 
-    while(right<=end)
+    while (right <= end)
     {
         temp.push_back(arr[right]);
         right++;
-
     }
 
-    for(int i = start; i<=end; i++)
+    for (int i = start; i <= end; i++)
     {
         arr[i] = temp[i - start];
     }
-
-
 }
 void mergeSort(int arr[], int start, int end)
 {
-    if(start >= end)
+    if (start >= end)
     {
-        return ;
+        return;
     }
 
-    int mid = (start + end)/2;
+    int mid = (start + end) / 2;
 
     mergeSort(arr, start, mid);
-    mergeSort(arr, mid+1, end);
-    merge(arr,start, mid, end);
-}
-void print(int arr[], int size)
-{
-
-    for(int i = 0; i<size; i++)
-    {
-        cout<<arr[i]<<" ";
-    }
-    cout<<endl;
-
+    mergeSort(arr, mid + 1, end);
+    // count
+    counter++;
+    cout << "pass Number:- " << counter << endl;
+    merge(arr, start, mid, end);
+    print(arr, 6);
 }
 
 int main()
 {
-     int size = 6;
+    int size = 6;
 
-    int arr[size] = {64,25,12,22,11,80};
+    int arr[size] = {64, 25, 12, 22, 11, 80};
 
-    mergeSort(arr, 0,size-1);
+    mergeSort(arr, 0, size - 1);
 
     print(arr, size);
-
-
 }

@@ -97,5 +97,7 @@ int main() {
         cout << "The value " << search << " is not present in the tree." << endl;
     }
 
+    delete root;
+
     return 0;
 }

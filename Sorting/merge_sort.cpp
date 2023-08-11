@@ -60,8 +60,8 @@ void mergeSort(int arr[], int start, int end)
     mergeSort(arr, start, mid);
     mergeSort(arr, mid + 1, end);
     // count
-    counter++;
-    cout << "pass Number:- " << counter << endl;
+    // counter++;
+    // cout << "pass Number:- " << counter << endl;
     merge(arr, start, mid, end);
     print(arr, 6);
 }

@@ -7,6 +7,7 @@ Welcome to the DSA repository! This repository contains a collection of practice
 ## Introduction
 
 In this repository, you'll find a variety of DSA practice questions that cover different aspects of data structures and algorithms.
+
 ## Topics Covered
 
 The questions in this repository cover a wide range of DSA topics, including but not limited to:
@@ -18,5 +19,5 @@ The questions in this repository cover a wide range of DSA topics, including but
 - Graphs and Graph Algorithms
 - Sorting and Searching Algorithms
 - Dynamic Programming
+- Questions ask in different companies
 - and more...
-

@@ -1,0 +1,61 @@
+/**
+ * Flattens all UDT columns and their nested structures into the main DataFrame.
+ *
+ * @param dataset The input Dataset<Row> from Cassandra
+ * @return A flattened Dataset<Row> with all UDT fields directly in the main DataFrame
+ */
+private static Dataset<Row> flattenUDTs(Dataset<Row> dataset) {
+    StructType schema = dataset.schema();
+    Dataset<Row> flattenedDataset = dataset;
+
+    for (StructField field : schema.fields()) {
+        String columnName = field.name();
+
+        if (field.dataType() instanceof StructType) {
+            // Flatten UDT columns
+            StructType udtSchema = (StructType) field.dataType();
+
+            // Extract UDT fields and add to the main DataFrame
+            flattenedDataset = addUDTFieldsToDataset(flattenedDataset, columnName, udtSchema);
+
+            // Drop the original UDT column
+            flattenedDataset = flattenedDataset.drop(columnName);
+
+        } else if (field.dataType() instanceof ArrayType) {
+            // Handle List of UDTs
+            ArrayType arrayType = (ArrayType) field.dataType();
+
+            if (arrayType.elementType() instanceof StructType) {
+                StructType udtSchema = (StructType) arrayType.elementType();
+
+                // Explode the list and flatten the UDT fields
+                flattenedDataset = flattenedDataset.withColumn(columnName, explode(col(columnName)));
+                flattenedDataset = addUDTFieldsToDataset(flattenedDataset, columnName, udtSchema);
+
+                // Drop the original list column
+                flattenedDataset = flattenedDataset.drop(columnName);
+            }
+        }
+    }
+
+    return flattenedDataset;
+}
+
+/**
+ * Adds the fields of a UDT column as new columns to the main DataFrame.
+ *
+ * @param dataset   The input Dataset<Row>
+ * @param udtColumn The UDT column name
+ * @param udtSchema The schema of the UDT
+ * @return The updated Dataset<Row> with UDT fields added as new columns
+ */
+private static Dataset<Row> addUDTFieldsToDataset(Dataset<Row> dataset, String udtColumn, StructType udtSchema) {
+    Dataset<Row> updatedDataset = dataset;
+
+    for (StructField field : udtSchema.fields()) {
+        String newColumnName = udtColumn + "_" + field.name(); // Flattened column naming
+        updatedDataset = updatedDataset.withColumn(newColumnName, col(udtColumn + "." + field.name()));
+    }
+
+    return updatedDataset;
+}

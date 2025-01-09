@@ -1,0 +1,184 @@
+import org.apache.spark.sql.*;
+import org.apache.spark.sql.types.*;
+import static org.apache.spark.sql.functions.*;
+import scala.collection.JavaConverters;
+import java.util.*;
+
+public class CassandraUDTFlattener {
+    
+    /**
+     * Main entry point to flatten nested structures
+     */
+    public static Dataset<Row> flattenComplexStructure(Dataset<Row> df) {
+        StructType schema = df.schema();
+        List<Column> flattenedColumns = new ArrayList<>();
+        
+        for (StructField field : schema.fields()) {
+            flattenedColumns.addAll(processField(field, "", field.name()));
+        }
+        
+        return df.select(JavaConverters.asScalaIteratorConverter(
+            flattenedColumns.iterator()).asScala().toSeq());
+    }
+    
+    /**
+     * Process any field type and route to appropriate handler
+     */
+    private static List<Column> processField(StructField field, String prefix, String fieldPath) {
+        List<Column> columns = new ArrayList<>();
+        String newPrefix = prefix.isEmpty() ? field.name() : prefix + "_" + field.name();
+        
+        if (isStructType(field.dataType())) {
+            columns.addAll(processStructType(field, newPrefix, fieldPath));
+        }
+        else if (isArrayType(field.dataType())) {
+            columns.addAll(processArrayType(field, newPrefix, fieldPath));
+        }
+        else {
+            // Base case: simple field
+            columns.add(col(fieldPath).as(newPrefix));
+        }
+        
+        return columns;
+    }
+    
+    /**
+     * Process struct type (UDT)
+     */
+    private static List<Column> processStructType(StructField field, String prefix, String fieldPath) {
+        List<Column> columns = new ArrayList<>();
+        StructType structType = (StructType) field.dataType();
+        
+        for (StructField subField : structType.fields()) {
+            String newFieldPath = fieldPath + "." + subField.name();
+            columns.addAll(processField(subField, prefix, newFieldPath));
+        }
+        
+        return columns;
+    }
+    
+    /**
+     * Process array type
+     */
+    private static List<Column> processArrayType(StructField field, String prefix, String fieldPath) {
+        List<Column> columns = new ArrayList<>();
+        ArrayType arrayType = (ArrayType) field.dataType();
+        DataType elementType = arrayType.elementType();
+        
+        if (isStructType(elementType)) {
+            // Array of struct
+            StructType structType = (StructType) elementType;
+            for (StructField subField : structType.fields()) {
+                columns.addAll(processArrayElement(field, subField, prefix, fieldPath));
+            }
+        } else if (isArrayType(elementType)) {
+            // Nested array
+            columns.addAll(processNestedArray(field, prefix, fieldPath));
+        } else {
+            // Array of simple type
+            columns.add(col(fieldPath).as(prefix));
+        }
+        
+        return columns;
+    }
+    
+    /**
+     * Process individual array elements when array contains structs
+     */
+    private static List<Column> processArrayElement(StructField arrayField, StructField elementField, 
+                                                  String prefix, String fieldPath) {
+        List<Column> columns = new ArrayList<>();
+        String newPrefix = prefix + "_" + elementField.name();
+        
+        if (isStructType(elementField.dataType())) {
+            // Handle nested struct in array element
+            StructType nestedType = (StructType) elementField.dataType();
+            for (StructField nestedField : nestedType.fields()) {
+                String nestedPath = elementField.name() + "." + nestedField.name();
+                Column transformedCol = transform(col(fieldPath),
+                    element -> element.getField(nestedPath))
+                    .as(newPrefix + "_" + nestedField.name());
+                columns.add(transformedCol);
+            }
+        } else if (isArrayType(elementField.dataType())) {
+            // Handle array within array element
+            Column transformedCol = transform(col(fieldPath),
+                element -> element.getField(elementField.name()))
+                .as(newPrefix);
+            columns.add(transformedCol);
+        } else {
+            // Handle simple field in array element
+            Column transformedCol = transform(col(fieldPath),
+                element -> element.getField(elementField.name()))
+                .as(newPrefix);
+            columns.add(transformedCol);
+        }
+        
+        return columns;
+    }
+    
+    /**
+     * Process nested arrays (array within array)
+     */
+    private static List<Column> processNestedArray(StructField field, String prefix, String fieldPath) {
+        List<Column> columns = new ArrayList<>();
+        ArrayType arrayType = (ArrayType) field.dataType();
+        ArrayType nestedArrayType = (ArrayType) arrayType.elementType();
+        
+        if (isStructType(nestedArrayType.elementType())) {
+            // Handle array of array of struct
+            StructType structType = (StructType) nestedArrayType.elementType();
+            for (StructField subField : structType.fields()) {
+                Column transformedCol = transform(col(fieldPath),
+                    outerArray -> transform(outerArray,
+                        element -> element.getField(subField.name())))
+                    .as(prefix + "_" + subField.name());
+                columns.add(transformedCol);
+            }
+        } else {
+            // Handle array of array of simple type
+            columns.add(col(fieldPath).as(prefix));
+        }
+        
+        return columns;
+    }
+    
+    private static boolean isStructType(DataType dataType) {
+        return dataType instanceof StructType;
+    }
+    
+    private static boolean isArrayType(DataType dataType) {
+        return dataType instanceof ArrayType;
+    }
+    
+    /**
+     * Example usage with your schema
+     */
+    public static void main(String[] args) {
+        SparkSession spark = SparkSession.builder()
+            .appName("Complex Nested Structure Flattener")
+            .getOrCreate();
+            
+        // Example schema matching your structure
+        StructType schema = new StructType()
+            .add("c1", new StructType()
+                .add("c2", StringType))
+            .add("c3", new ArrayType(
+                new StructType()
+                    .add("a1", StringType)
+                    .add("a2", StringType)
+                    .add("a3", new ArrayType(
+                        new StructType()
+                            .add("d1", StringType)
+                            .add("d3", StringType),
+                        true)),
+                true));
+                
+        // Create sample data
+        Dataset<Row> sampleDF = spark.createDataFrame(new ArrayList<>(), schema);
+        
+        // Flatten the structure
+        Dataset<Row> flattenedDF = flattenComplexStructure(sampleDF);
+        flattenedDF.printSchema();
+    }
+}

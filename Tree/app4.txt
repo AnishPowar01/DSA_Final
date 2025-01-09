@@ -1,46 +1,51 @@
 /**
- * Flattens all UDT columns and nested lists of UDTs into the main DataFrame.
+ * Iteratively flattens all UDT columns and nested lists into the main DataFrame.
  *
  * @param dataset The input Dataset<Row> from Cassandra
- * @return A flattened Dataset<Row> with all UDT fields and nested lists flattened
+ * @return A fully flattened Dataset<Row>
  */
-private static Dataset<Row> flattenNestedUDTs(Dataset<Row> dataset) {
-    StructType schema = dataset.schema();
-    Dataset<Row> flattenedDataset = dataset;
+private static Dataset<Row> flattenAllUDTs(Dataset<Row> dataset) {
+    boolean hasNestedColumns = true;
 
-    for (StructField field : schema.fields()) {
-        String columnName = field.name();
+    while (hasNestedColumns) {
+        hasNestedColumns = false;
+        StructType schema = dataset.schema();
 
-        if (field.dataType() instanceof StructType) {
-            // Flatten UDT columns
-            StructType udtSchema = (StructType) field.dataType();
+        for (StructField field : schema.fields()) {
+            String columnName = field.name();
 
-            // Extract UDT fields and add to the main DataFrame
-            flattenedDataset = addUDTFieldsToDataset(flattenedDataset, columnName, udtSchema);
+            if (field.dataType() instanceof StructType) {
+                // Flatten UDT column
+                StructType udtSchema = (StructType) field.dataType();
+                dataset = addUDTFieldsToDataset(dataset, columnName, udtSchema);
 
-            // Drop the original UDT column
-            flattenedDataset = flattenedDataset.drop(columnName);
+                // Drop the original UDT column
+                dataset = dataset.drop(columnName);
 
-        } else if (field.dataType() instanceof ArrayType) {
-            // Handle List of UDTs
-            ArrayType arrayType = (ArrayType) field.dataType();
+                // Mark that there are still nested columns to process
+                hasNestedColumns = true;
 
-            if (arrayType.elementType() instanceof StructType) {
-                StructType udtSchema = (StructType) arrayType.elementType();
+            } else if (field.dataType() instanceof ArrayType) {
+                ArrayType arrayType = (ArrayType) field.dataType();
 
-                // Explode the list and flatten the UDT fields
-                flattenedDataset = flattenedDataset.withColumn(columnName, explode_outer(col(columnName)));
-                flattenedDataset = flattenNestedUDTs(flattenedDataset);
+                if (arrayType.elementType() instanceof StructType) {
+                    // Handle List of UDTs: Explode, flatten, and merge
+                    StructType udtSchema = (StructType) arrayType.elementType();
 
-            } else if (arrayType.elementType() instanceof ArrayType) {
-                // Handle nested lists (list of lists of UDTs)
-                flattenedDataset = flattenedDataset.withColumn(columnName, explode_outer(col(columnName)));
-                flattenedDataset = flattenNestedUDTs(flattenedDataset);
+                    dataset = dataset.withColumn(columnName, explode_outer(col(columnName)));
+                    dataset = addUDTFieldsToDataset(dataset, columnName, udtSchema);
+
+                    // Drop the original list column
+                    dataset = dataset.drop(columnName);
+
+                    // Mark that there are still nested columns to process
+                    hasNestedColumns = true;
+                }
             }
         }
     }
 
-    return flattenedDataset;
+    return dataset;
 }
 
 /**

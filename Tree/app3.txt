@@ -1,0 +1,66 @@
+/**
+ * Processes UDT columns and stores DataFrames in the list.
+ *
+ * @param dataset       The input Dataset<Row> from Cassandra
+ * @param tableName     The base table name
+ * @param tableDataList The list to store extracted DataFrames and their table names
+ */
+private static void processUDTColumns(Dataset<Row> dataset, String tableName, List<TableData> tableDataList) {
+    StructType schema = dataset.schema();
+
+    for (StructField field : schema.fields()) {
+        String columnName = field.name();
+
+        if (field.dataType() instanceof StructType) {
+            // Handle UDT Columns
+            StructType udtSchema = (StructType) field.dataType();
+
+            // Extract UDT Fields
+            Dataset<Row> udtDataFrame = extractUDTFieldsOnly(dataset, columnName, udtSchema);
+
+            // Add UDT DataFrame to the list
+            tableDataList.add(new TableData(tableName + "_" + columnName, udtDataFrame));
+
+            // Recursively process nested UDTs
+            processUDTColumns(udtDataFrame, tableName + "_" + columnName, tableDataList);
+
+        } else if (field.dataType() instanceof ArrayType) {
+            // Handle List of UDTs
+            ArrayType arrayType = (ArrayType) field.dataType();
+            if (arrayType.elementType() instanceof StructType) {
+                StructType udtSchema = (StructType) arrayType.elementType();
+
+                // Explode List and Extract UDT Fields
+                Dataset<Row> explodedDataFrame = dataset.withColumn(columnName, explode(col(columnName)));
+                Dataset<Row> udtDataFrame = extractUDTFieldsOnly(explodedDataFrame, columnName, udtSchema);
+
+                // Add UDT DataFrame to the list
+                tableDataList.add(new TableData(tableName + "_" + columnName, udtDataFrame));
+
+                // Recursively process nested UDTs
+                processUDTColumns(udtDataFrame, tableName + "_" + columnName, tableDataList);
+            }
+        }
+    }
+}
+
+/**
+ * Extracts only the fields of a UDT column into a new DataFrame.
+ *
+ * @param dataset   The input Dataset<Row>
+ * @param udtColumn The UDT column name
+ * @param udtSchema The schema of the UDT
+ * @return The new DataFrame with only the fields of the UDT
+ */
+private static Dataset<Row> extractUDTFieldsOnly(Dataset<Row> dataset, String udtColumn, StructType udtSchema) {
+    List<Column> udtFields = new ArrayList<>();
+
+    // Collect UDT field columns
+    for (StructField field : udtSchema.fields()) {
+        String newColumnName = field.name(); // UDT fields retain their original names
+        udtFields.add(col(udtColumn + "." + newColumnName).alias(newColumnName));
+    }
+
+    // Select only the UDT fields
+    return dataset.select(udtFields.toArray(new Column[0]));
+}

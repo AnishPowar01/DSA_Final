@@ -1,0 +1,182 @@
+import org.apache.spark.SparkConf;
+import org.apache.spark.sql.*;
+import org.apache.spark.sql.types.*;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.apache.spark.sql.functions.*;
+
+public class CassandraUDTToPostgres {
+    public static void main(String[] args) {
+        // Spark Configuration
+        SparkConf sparkConf = new SparkConf()
+                .setAppName("CassandraUDTToPostgres")
+                .setMaster("local[*]")
+                .set("spark.cassandra.connection.host", "127.0.0.1"); // Replace with your Cassandra host
+
+        SparkSession spark = SparkSession.builder()
+                .config(sparkConf)
+                .getOrCreate();
+
+        // Read Cassandra Table
+        Dataset<Row> cassandraData = spark.read()
+                .format("org.apache.spark.sql.cassandra")
+                .option("keyspace", "your_keyspace") // Replace with your keyspace
+                .option("table", "employee")        // Replace with your table
+                .load();
+
+        // List to hold DataFrames and their respective table names
+        List<TableData> tableDataList = new ArrayList<>();
+
+        // Extract Main Table Minus UDTs
+        Dataset<Row> mainTable = extractMainTableMinusUDTs(cassandraData);
+        tableDataList.add(new TableData("employee_main", mainTable));
+
+        // Process UDT Columns and Collect DataFrames
+        processUDTColumns(cassandraData, "employee", tableDataList);
+
+        // Write All DataFrames to PostgreSQL
+        writeAllToPostgres(tableDataList);
+
+        // Stop Spark Session
+        spark.stop();
+    }
+
+    /**
+     * Extracts the main table excluding UDT columns.
+     *
+     * @param dataset The input Dataset<Row> from Cassandra
+     * @return The main table without UDT columns
+     */
+    private static Dataset<Row> extractMainTableMinusUDTs(Dataset<Row> dataset) {
+        StructType schema = dataset.schema();
+        Dataset<Row> mainTable = dataset;
+
+        for (StructField field : schema.fields()) {
+            if (field.dataType() instanceof StructType || field.dataType() instanceof ArrayType) {
+                mainTable = mainTable.drop(field.name());
+            }
+        }
+
+        return mainTable;
+    }
+
+    /**
+     * Processes UDT columns and stores DataFrames in the list.
+     *
+     * @param dataset       The input Dataset<Row> from Cassandra
+     * @param tableName     The base table name
+     * @param tableDataList The list to store extracted DataFrames and their table names
+     */
+    private static void processUDTColumns(Dataset<Row> dataset, String tableName, List<TableData> tableDataList) {
+        StructType schema = dataset.schema();
+
+        for (StructField field : schema.fields()) {
+            if (field.dataType() instanceof StructType) {
+                // Handle UDT Columns
+                String udtColumnName = field.name();
+                StructType udtSchema = (StructType) field.dataType();
+
+                // Extract UDT Fields Minus Nested UDTs
+                Dataset<Row> udtDataFrame = extractUDTFieldsMinusNested(dataset, udtColumnName, udtSchema);
+
+                // Add UDT DataFrame to the list
+                tableDataList.add(new TableData(tableName + "_" + udtColumnName, udtDataFrame));
+
+                // Handle Nested UDTs Recursively
+                processUDTColumns(dataset.select(col(udtColumnName + ".*")), tableName + "_" + udtColumnName, tableDataList);
+
+            } else if (field.dataType() instanceof ArrayType) {
+                // Handle List of UDTs
+                ArrayType arrayType = (ArrayType) field.dataType();
+                if (arrayType.elementType() instanceof StructType) {
+                    String listColumnName = field.name();
+                    StructType udtSchema = (StructType) arrayType.elementType();
+
+                    // Explode List and Extract UDT Fields Minus Nested UDTs
+                    Dataset<Row> explodedDataFrame = dataset.withColumn(listColumnName, explode(col(listColumnName)));
+                    Dataset<Row> udtDataFrame = extractUDTFieldsMinusNested(explodedDataFrame, listColumnName, udtSchema);
+
+                    // Add UDT DataFrame to the list
+                    tableDataList.add(new TableData(tableName + "_" + listColumnName, udtDataFrame));
+
+                    // Handle Nested UDTs Recursively
+                    processUDTColumns(explodedDataFrame.select(col(listColumnName + ".*")), tableName + "_" + listColumnName, tableDataList);
+                }
+            }
+        }
+    }
+
+    /**
+     * Extracts UDT fields into a new DataFrame excluding nested UDTs.
+     *
+     * @param dataset   The input Dataset<Row>
+     * @param udtColumn The UDT column name
+     * @param udtSchema The schema of the UDT
+     * @return The new DataFrame with extracted fields minus nested UDTs
+     */
+    private static Dataset<Row> extractUDTFieldsMinusNested(Dataset<Row> dataset, String udtColumn, StructType udtSchema) {
+        Dataset<Row> extractedDataFrame = dataset;
+
+        for (StructField field : udtSchema.fields()) {
+            if (!(field.dataType() instanceof StructType || field.dataType() instanceof ArrayType)) {
+                String newColumnName = udtColumn + "_" + field.name();
+                extractedDataFrame = extractedDataFrame.withColumn(newColumnName, col(udtColumn + "." + field.name()));
+            }
+        }
+
+        // Drop the original UDT column
+        extractedDataFrame = extractedDataFrame.drop(udtColumn);
+        return extractedDataFrame;
+    }
+
+    /**
+     * Writes all DataFrames in the list to PostgreSQL.
+     *
+     * @param tableDataList The list of DataFrames and their table names
+     */
+    private static void writeAllToPostgres(List<TableData> tableDataList) {
+        for (TableData tableData : tableDataList) {
+            writeToPostgres(tableData.getDataFrame(), tableData.getTableName());
+        }
+    }
+
+    /**
+     * Writes a single DataFrame to PostgreSQL.
+     *
+     * @param dataset   The Dataset<Row> to write
+     * @param tableName The name of the PostgreSQL table
+     */
+    private static void writeToPostgres(Dataset<Row> dataset, String tableName) {
+        dataset.write()
+                .format("jdbc")
+                .option("url", "jdbc:postgresql://localhost:5432/your_database") // Replace with your DB details
+                .option("dbtable", tableName)                                   // Target table name
+                .option("user", "your_user")                                   // DB user
+                .option("password", "your_password")                           // DB password
+                .mode(SaveMode.Overwrite)                                      // Overwrite existing table
+                .save();
+    }
+
+    /**
+     * Helper class to store table name and DataFrame.
+     */
+    private static class TableData {
+        private final String tableName;
+        private final Dataset<Row> dataFrame;
+
+        public TableData(String tableName, Dataset<Row> dataFrame) {
+            this.tableName = tableName;
+            this.dataFrame = dataFrame;
+        }
+
+        public String getTableName() {
+            return tableName;
+        }
+
+        public Dataset<Row> getDataFrame() {
+            return dataFrame;
+        }
+    }
+}

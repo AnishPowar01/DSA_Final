@@ -1,0 +1,171 @@
+import org.apache.spark.sql.*;
+import org.apache.spark.sql.types.*;
+import static org.apache.spark.sql.functions.*;
+import java.util.*;
+
+public class DynamicTableSplitter {
+    public static class TableSet {
+        public final Dataset<Row> mainTable;
+        public final Map<String, Dataset<Row>> childTables;
+
+        public TableSet(Dataset<Row> mainTable, Map<String, Dataset<Row>> childTables) {
+            this.mainTable = mainTable;
+            this.childTables = childTables;
+        }
+    }
+
+    private static class FieldInfo {
+        final String path;
+        final String name;
+        final DataType dataType;
+        final boolean isArray;
+        final boolean isStruct;
+
+        FieldInfo(String path, String name, DataType dataType) {
+            this.path = path;
+            this.name = name;
+            this.dataType = dataType;
+            this.isArray = dataType instanceof ArrayType;
+            this.isStruct = isArray ? 
+                ((ArrayType) dataType).elementType() instanceof StructType :
+                dataType instanceof StructType;
+        }
+    }
+
+    public static TableSet splitTables(Dataset<Row> dataset, String mainTableName, List<String> mainKeyColumns) {
+        // Convert to JSON and back to normalize the structure
+        Dataset<Row> jsonDF = dataset.select(to_json(struct("*")).as("json_data"));
+        Dataset<Row> parsedDF = jsonDF.select(from_json(col("json_data"), dataset.schema()).as("parsed_data"))
+                                    .select("parsed_data.*");
+
+        // Get all nested fields that need to be processed
+        List<FieldInfo> fieldsToProcess = findNestedFields(dataset.schema(), "");
+        
+        Map<String, Dataset<Row>> childTables = new HashMap<>();
+        Dataset<Row> mainTable = parsedDF;
+
+        // Process each nested field
+        for (FieldInfo field : fieldsToProcess) {
+            String tableName = createTableName(mainTableName, field.path);
+            Dataset<Row> childTable = createChildTable(
+                mainTable, 
+                field, 
+                mainKeyColumns,
+                getParentSeqColumns(field.path)
+            );
+
+            childTables.put(tableName, childTable);
+            mainTable = mainTable.drop(field.name);
+        }
+
+        return new TableSet(mainTable, childTables);
+    }
+
+    private static List<FieldInfo> findNestedFields(StructType schema, String parentPath) {
+        List<FieldInfo> fields = new ArrayList<>();
+        
+        for (StructField field : schema.fields()) {
+            String currentPath = parentPath.isEmpty() ? field.name() : parentPath + "." + field.name();
+            
+            if (field.dataType() instanceof ArrayType) {
+                ArrayType arrayType = (ArrayType) field.dataType();
+                if (arrayType.elementType() instanceof StructType) {
+                    fields.add(new FieldInfo(currentPath, field.name(), field.dataType()));
+                    fields.addAll(findNestedFields((StructType) arrayType.elementType(), currentPath));
+                }
+            } else if (field.dataType() instanceof StructType) {
+                fields.add(new FieldInfo(currentPath, field.name(), field.dataType()));
+                fields.addAll(findNestedFields((StructType) field.dataType(), currentPath));
+            }
+        }
+        
+        return fields;
+    }
+
+    private static String createTableName(String mainTableName, String fieldPath) {
+        return mainTableName + "_" + fieldPath.replace(".", "_");
+    }
+
+    private static List<String> getParentSeqColumns(String path) {
+        List<String> seqColumns = new ArrayList<>();
+        String[] parts = path.split("\\.");
+        StringBuilder currentPath = new StringBuilder();
+        
+        for (int i = 0; i < parts.length - 1; i++) {
+            if (currentPath.length() > 0) {
+                currentPath.append("_");
+            }
+            currentPath.append(parts[i]);
+            seqColumns.add("seq_" + currentPath.toString());
+        }
+        
+        return seqColumns;
+    }
+
+    private static Dataset<Row> createChildTable(
+            Dataset<Row> parentTable,
+            FieldInfo field,
+            List<String> mainKeyColumns,
+            List<String> parentSeqColumns
+    ) {
+        // Prepare columns to select
+        List<Column> selectColumns = new ArrayList<>();
+        
+        // Add main key columns
+        for (String keyColumn : mainKeyColumns) {
+            selectColumns.add(col(keyColumn));
+        }
+        
+        // Add parent sequence columns
+        for (String seqColumn : parentSeqColumns) {
+            selectColumns.add(col(seqColumn));
+        }
+
+        // Create child table
+        Dataset<Row> childTable;
+        if (field.isArray) {
+            // Handle array of structs
+            selectColumns.add(explode_outer(col(field.path)).as(field.name + "_exploded"));
+            childTable = parentTable.select(selectColumns.toArray(new Column[0]));
+            
+            if (field.dataType instanceof ArrayType && 
+                ((ArrayType) field.dataType).elementType() instanceof StructType) {
+                StructType structType = (StructType) ((ArrayType) field.dataType).elementType();
+                for (StructField structField : structType.fields()) {
+                    if (!(structField.dataType() instanceof ArrayType) && 
+                        !(structField.dataType() instanceof StructType)) {
+                        childTable = childTable.withColumn(
+                            structField.name(),
+                            col(field.name + "_exploded" + "." + structField.name())
+                        );
+                    }
+                }
+            }
+            childTable = childTable.drop(field.name + "_exploded");
+        } else {
+            // Handle struct
+            selectColumns.add(col(field.path));
+            childTable = parentTable.select(selectColumns.toArray(new Column[0]));
+            
+            if (field.dataType instanceof StructType) {
+                StructType structType = (StructType) field.dataType;
+                for (StructField structField : structType.fields()) {
+                    if (!(structField.dataType() instanceof ArrayType) && 
+                        !(structField.dataType() instanceof StructType)) {
+                        childTable = childTable.withColumn(
+                            structField.name(),
+                            col(field.name + "." + structField.name())
+                        );
+                    }
+                }
+            }
+            childTable = childTable.drop(field.name);
+        }
+
+        // Add sequence column for this level
+        String seqColumnName = "seq_" + field.path.replace(".", "_");
+        childTable = childTable.withColumn(seqColumnName, monotonically_increasing_id());
+
+        return childTable;
+    }
+}
